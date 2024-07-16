@@ -1,0 +1,18 @@
+[package]
+name = "lkaas-kerong"
+edition = "2021"
+version = "0.1.0"
+
+[dependencies]
+chrono = { version = "0.4.38", default-features = false, features = [
+    "oldtime",
+    "std",
+    "clock",
+] }
+dotenv = "0.15.0"
+rumqttc = "0.24.0"
+serial = "0.4.0"
+tokio = { version = "1.38.0", features = ["full"] }
+
+[profile.release]
+opt-level = 3
