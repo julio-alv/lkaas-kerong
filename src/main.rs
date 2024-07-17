@@ -31,7 +31,7 @@ async fn main() {
         .set_clean_session(true)
         .set_keep_alive(Duration::from_secs(cfg.keep_alive));
 
-    let (client, mut eventloop) = AsyncClient::new(mqttoptions, 0);
+    let (client, mut eventloop) = AsyncClient::new(mqttoptions, 16);
     client
         .subscribe(format!("{}/cmd", &cfg.uid), QoS::ExactlyOnce)
         .await

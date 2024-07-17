@@ -1,7 +1,7 @@
 dev:
-	cross build --target x86_64-unknown-linux-gnu
-	scp ./target/x86_64-unknown-linux-gnu/debug/lkaas-kerong user@192.168.100.13:/home/user
+	cross build --target aarch64-unknown-linux-musl
+	scp ./target/aarch64-unknown-linux-musl/debug/lkaas-kerong root@192.168.100.15:/
 
 release:
-	cross build --release --target x86_64-unknown-linux-gnu
-	scp ./target/x86_64-unknown-linux-gnu/release/lkaas-kerong user@192.168.100.13:/home/user
+	cross build --release --target aarch64-unknown-linux-musl
+	scp ./target/aarch64-unknown-linux-musl/release/lkaas-kerong root@192.168.100.15:/
