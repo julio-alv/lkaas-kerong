@@ -27,11 +27,11 @@ async fn main() {
     let content = fs::read_to_string(path).await.expect("Failed to read file");
     let config: Config = toml::from_str(&content).expect("Failed to load Config.toml");
 
-    let mut mqttoptions = MqttOptions::new(&config.uid, &config.mqtt.url, 8883);
+    let mut mqttoptions = MqttOptions::new("testerrereeerre", &config.mqtt.url, 8884);
     mqttoptions
+        .set_clean_session(true)
         .set_credentials(&config.mqtt.user, &config.mqtt.pass)
         .set_transport(rumqttc::Transport::tls_with_default_config())
-        .set_clean_session(true)
         .set_keep_alive(Duration::from_secs(config.mqtt.keep_alive));
 
     let (client, mut eventloop) = AsyncClient::new(mqttoptions, 16);
@@ -69,8 +69,8 @@ async fn main() {
     // Receives a message and attempts to unlock a locker
     let board_writer = Arc::clone(&board);
     tokio::spawn(async move {
-        while let Ok(msg) = eventloop.poll().await {
-            if let Event::Incoming(Packet::Publish(publish)) = msg {
+        match eventloop.poll().await {
+            Ok(Event::Incoming(Packet::Publish(publish))) => {
                 let payload = String::from_utf8(publish.payload.to_vec()).unwrap();
                 if let Ok(n) = payload.parse::<u8>() {
                     let mut board = board_writer.lock().await;
@@ -78,19 +78,31 @@ async fn main() {
                     println!("CMD: {:?}", n);
                 }
             }
+            Ok(event) => println!("Other event: {:?}", event),
+            Err(e) => eprintln!("Connection Error: {}", e),
         }
     });
 
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            println!("{:?}", msg);
             match msg {
                 Msg::Status(s) => client
-                    .publish(format!("{}/status", &config.uid), QoS::AtLeastOnce, false, s)
+                    .publish(
+                        format!("{}/status", &config.uid),
+                        QoS::AtLeastOnce,
+                        false,
+                        s,
+                    )
                     .await
                     .unwrap_or_else(|e| eprintln!("Failed to publish to MQTT broker: {}", e)),
+
                 Msg::Event(s) => client
-                    .publish(format!("{}/events", &config.uid), QoS::AtLeastOnce, false, s)
+                    .publish(
+                        format!("{}/events", &config.uid),
+                        QoS::AtLeastOnce,
+                        false,
+                        s,
+                    )
                     .await
                     .unwrap_or_else(|e| eprintln!("Failed to publish to MQTT broker: {}", e)),
             }
@@ -129,8 +141,12 @@ async fn event_loop(
                     }
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-            Err(_) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                println!("Time out! Continuing...");
+            }
+            Err(e) => {
+                eprintln!("Serial Communication Error (skiping): {}", e);
+            }
         }
         time::sleep(Duration::from_millis(interval_ms)).await;
     }

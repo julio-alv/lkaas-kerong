@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Config {
     pub uid: String,
     pub serial_port: String,
@@ -8,7 +8,7 @@ pub struct Config {
     pub mqtt: Mqtt,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct Mqtt {
     pub url: String,
     pub user: String,
