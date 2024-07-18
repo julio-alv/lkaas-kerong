@@ -1,0 +1,9 @@
+uid = "lkaas"
+serial_port = "/dev/ttyUSB0"
+post_seconds = 60
+
+[mqtt]
+url = "localhost"
+user = "user"
+pass = "pass"
+keep_alive = 10

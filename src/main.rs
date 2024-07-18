@@ -1,17 +1,18 @@
 use chrono::Utc;
-use dotenv::dotenv;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 
 mod config;
 mod kerong;
 
-use config::Settings;
+use config::Config;
 use kerong::board::CU16;
 use kerong::status::Status;
+use std::env;
+use std::path::Path;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::time;
+use tokio::{fs, time};
 
 #[derive(Debug)]
 pub enum Msg {
@@ -21,25 +22,27 @@ pub enum Msg {
 
 #[tokio::main]
 async fn main() {
-    dotenv().ok();
-    let cfg = Settings::from_env().expect("Failed to load Env variables");
+    let args: Vec<String> = env::args().collect();
+    let path = Path::new(&args[1]);
+    let content = fs::read_to_string(path).await.expect("Failed to read file");
+    let config: Config = toml::from_str(&content).expect("Failed to load Config.toml");
 
-    let mut mqttoptions = MqttOptions::new(&cfg.uid, &cfg.mqtt_url, 8883);
+    let mut mqttoptions = MqttOptions::new(&config.uid, &config.mqtt.url, 8883);
     mqttoptions
-        .set_credentials(&cfg.mqtt_user, &cfg.mqtt_pass)
+        .set_credentials(&config.mqtt.user, &config.mqtt.pass)
         .set_transport(rumqttc::Transport::tls_with_default_config())
         .set_clean_session(true)
-        .set_keep_alive(Duration::from_secs(cfg.keep_alive));
+        .set_keep_alive(Duration::from_secs(config.mqtt.keep_alive));
 
     let (client, mut eventloop) = AsyncClient::new(mqttoptions, 16);
     client
-        .subscribe(format!("{}/cmd", &cfg.uid), QoS::ExactlyOnce)
+        .subscribe(format!("{}/cmd", &config.uid), QoS::ExactlyOnce)
         .await
         .unwrap();
 
     // Initialize CU16 Board
     let board = Arc::new(Mutex::new(
-        CU16::initialize(&cfg.serial_port)
+        CU16::initialize(&config.serial_port)
             .expect("Failed to initialize communication with CU16 Board"),
     ));
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -59,7 +62,7 @@ async fn main() {
     // Sends the last status written by the event loop every minute
     let reader = Arc::clone(&status);
     tokio::spawn(async move {
-        status_loop(reader, tx, cfg.post_seconds).await;
+        status_loop(reader, tx, config.post_seconds).await;
     });
 
     // CMD loop
@@ -83,11 +86,11 @@ async fn main() {
             println!("{:?}", msg);
             match msg {
                 Msg::Status(s) => client
-                    .publish(format!("{}/status", &cfg.uid), QoS::AtLeastOnce, false, s)
+                    .publish(format!("{}/status", &config.uid), QoS::AtLeastOnce, false, s)
                     .await
                     .unwrap_or_else(|e| eprintln!("Failed to publish to MQTT broker: {}", e)),
                 Msg::Event(s) => client
-                    .publish(format!("{}/events", &cfg.uid), QoS::AtLeastOnce, false, s)
+                    .publish(format!("{}/events", &config.uid), QoS::AtLeastOnce, false, s)
                     .await
                     .unwrap_or_else(|e| eprintln!("Failed to publish to MQTT broker: {}", e)),
             }
