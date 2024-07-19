@@ -14,6 +14,7 @@ chrono = { version = "0.4.38", default-features = false, features = [
 rumqttc = "0.24.0"
 serial = "0.4.0"
 toml = "0.8.15"
+rand = "0.8.5"
 
 [profile.release]
 opt-level = 3

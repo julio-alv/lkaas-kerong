@@ -1,5 +1,9 @@
 use chrono::Utc;
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use rumqttc::v5::mqttbytes::v5::Packet;
+use rumqttc::v5::mqttbytes::QoS;
+use rumqttc::v5::{AsyncClient, Event, EventLoop, MqttOptions};
+
+use rand::{distributions::Alphanumeric, Rng};
 
 mod config;
 mod kerong;
@@ -7,8 +11,10 @@ mod kerong;
 use config::Config;
 use kerong::board::CU16;
 use kerong::status::Status;
+use tokio::io::AsyncWriteExt;
 use std::env;
 use std::path::Path;
+use std::process;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -22,21 +28,33 @@ pub enum Msg {
 
 #[tokio::main]
 async fn main() {
+    let pid = process::id();
     let args: Vec<String> = env::args().collect();
-    let path = Path::new(&args[1]);
-    let content = fs::read_to_string(path).await.expect("Failed to read file");
+    let conf_path = Path::new(&args[1]);
+    let content = fs::read_to_string(conf_path).await.expect("Failed to read file");
     let config: Config = toml::from_str(&content).expect("Failed to load Config.toml");
 
-    let mut mqttoptions = MqttOptions::new("testerrereeerre", &config.mqtt.url, 8884);
-    mqttoptions
-        .set_clean_session(true)
+    // Create PID file
+    let mut file = fs::File::create(&config.pid_file).await.expect("Failed to create PID file");
+    file.write_all(pid.to_string().as_bytes()).await.expect("Failed to write PID file");
+
+    // Initialize MQTT Client
+    let client: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+    let mut opts = MqttOptions::new(format!("lkaas_{client}"), &config.mqtt.url, config.mqtt.port);
+    opts.set_clean_start(true)
         .set_credentials(&config.mqtt.user, &config.mqtt.pass)
-        .set_transport(rumqttc::Transport::tls_with_default_config())
         .set_keep_alive(Duration::from_secs(config.mqtt.keep_alive));
 
-    let (client, mut eventloop) = AsyncClient::new(mqttoptions, 16);
-    client
-        .subscribe(format!("{}/cmd", &config.uid), QoS::ExactlyOnce)
+    if config.mqtt.tls {
+        opts.set_transport(rumqttc::Transport::tls_with_default_config());
+    }
+
+    let (cli, eventloop) = AsyncClient::new(opts, 16);
+    cli.subscribe(format!("{}/cmd", &config.uid), QoS::ExactlyOnce)
         .await
         .unwrap();
 
@@ -47,6 +65,13 @@ async fn main() {
     ));
     let (tx, mut rx) = mpsc::unbounded_channel();
     let status = Arc::new(RwLock::new(Status::new()));
+
+    // CMD loop
+    // Receives a message and attempts to unlock a locker
+    let board_writer: Arc<Mutex<CU16>> = Arc::clone(&board);
+    tokio::spawn(async move {
+        cmd_loop(board_writer, eventloop).await;
+    });
 
     // Events Loop
     // Checks every 50ms if the locker wall has changed
@@ -65,46 +90,29 @@ async fn main() {
         status_loop(reader, tx, config.post_seconds).await;
     });
 
-    // CMD loop
-    // Receives a message and attempts to unlock a locker
-    let board_writer = Arc::clone(&board);
-    tokio::spawn(async move {
-        match eventloop.poll().await {
-            Ok(Event::Incoming(Packet::Publish(publish))) => {
-                let payload = String::from_utf8(publish.payload.to_vec()).unwrap();
-                if let Ok(n) = payload.parse::<u8>() {
-                    let mut board = board_writer.lock().await;
-                    board.open(n.saturating_sub(1)).unwrap();
-                    println!("CMD: {:?}", n);
-                }
-            }
-            Ok(event) => println!("Other event: {:?}", event),
-            Err(e) => eprintln!("Connection Error: {}", e),
-        }
-    });
-
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
+            println!("{:?}", msg);
             match msg {
-                Msg::Status(s) => client
+                Msg::Status(s) => cli
                     .publish(
                         format!("{}/status", &config.uid),
-                        QoS::AtLeastOnce,
+                        QoS::ExactlyOnce,
                         false,
                         s,
                     )
                     .await
-                    .unwrap_or_else(|e| eprintln!("Failed to publish to MQTT broker: {}", e)),
+                    .unwrap_or_else(|e| eprintln!("Failed to publish to sub-topic /status: {e}")),
 
-                Msg::Event(s) => client
+                Msg::Event(s) => cli
                     .publish(
                         format!("{}/events", &config.uid),
-                        QoS::AtLeastOnce,
+                        QoS::ExactlyOnce,
                         false,
                         s,
                     )
                     .await
-                    .unwrap_or_else(|e| eprintln!("Failed to publish to MQTT broker: {}", e)),
+                    .unwrap_or_else(|e| eprintln!("Failed to publish to sub-topic /events: {e}")),
             }
         }
     });
@@ -136,16 +144,15 @@ async fn event_loop(
                     match channel.send(Msg::Event(msg)) {
                         Ok(_) => {}
                         Err(e) => {
-                            eprintln!("Failed to send message to unbounded channel: {}", e);
+                            eprintln!("Failed to send message to unbounded channel: {e}");
                         }
                     }
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                println!("Time out! Continuing...");
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => (),
             Err(e) => {
-                eprintln!("Serial Communication Error (skiping): {}", e);
+                eprintln!("Serial Error: {e}");
+                time::sleep(Duration::from_millis(interval_ms * 2)).await;
             }
         }
         time::sleep(Duration::from_millis(interval_ms)).await;
@@ -168,6 +175,31 @@ async fn status_loop(
             Ok(_) => {}
             Err(e) => {
                 eprintln!("Failed to send message to unbounded channel: {}", e);
+            }
+        }
+    }
+}
+
+async fn cmd_loop(board: Arc<Mutex<CU16>>, mut eventloop: EventLoop) {
+    loop {
+        let event = eventloop.poll().await;
+        match &event {
+            Ok(v) => {
+                match v {
+                    Event::Incoming(Packet::Publish(publish)) => {
+                        let payload = String::from_utf8(publish.payload.to_vec()).unwrap();
+                        if let Ok(n) = payload.parse::<u8>() {
+                            let mut board = board.lock().await;
+                            board.open(n.saturating_sub(1)).unwrap();
+                            println!("Cmd: {n}");
+                        }
+                    }
+                    Event::Incoming(_) => (),
+                    Event::Outgoing(_) => (),
+                }
+            }
+            Err(e) => {
+                println!("Error = {e:?}");
             }
         }
     }
