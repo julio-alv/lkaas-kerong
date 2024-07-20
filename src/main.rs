@@ -11,10 +11,8 @@ mod kerong;
 use config::Config;
 use kerong::board::CU16;
 use kerong::status::Status;
-use tokio::io::AsyncWriteExt;
 use std::env;
 use std::path::Path;
-use std::process;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -28,15 +26,10 @@ pub enum Msg {
 
 #[tokio::main]
 async fn main() {
-    let pid = process::id();
     let args: Vec<String> = env::args().collect();
     let conf_path = Path::new(&args[1]);
     let content = fs::read_to_string(conf_path).await.expect("Failed to read file");
     let config: Config = toml::from_str(&content).expect("Failed to load Config.toml");
-
-    // Create PID file
-    let mut file = fs::File::create(&config.pid_file).await.expect("Failed to create PID file");
-    file.write_all(pid.to_string().as_bytes()).await.expect("Failed to write PID file");
 
     // Initialize MQTT Client
     let client: String = rand::thread_rng()
@@ -92,7 +85,6 @@ async fn main() {
 
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            println!("{:?}", msg);
             match msg {
                 Msg::Status(s) => cli
                     .publish(
@@ -191,7 +183,6 @@ async fn cmd_loop(board: Arc<Mutex<CU16>>, mut eventloop: EventLoop) {
                         if let Ok(n) = payload.parse::<u8>() {
                             let mut board = board.lock().await;
                             board.open(n.saturating_sub(1)).unwrap();
-                            println!("Cmd: {n}");
                         }
                     }
                     Event::Incoming(_) => (),
@@ -199,7 +190,7 @@ async fn cmd_loop(board: Arc<Mutex<CU16>>, mut eventloop: EventLoop) {
                 }
             }
             Err(e) => {
-                println!("Error = {e:?}");
+                eprintln!("Error = {e:?}");
             }
         }
     }

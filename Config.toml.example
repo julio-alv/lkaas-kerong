@@ -4,6 +4,8 @@ post_seconds = 60
 
 [mqtt]
 url = "localhost"
+port = 8883
 user = "user"
 pass = "pass"
-keep_alive = 10
+keep_alive = 15
+tls = true

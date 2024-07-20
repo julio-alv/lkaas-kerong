@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+
+description="LKAAS Kerong middleware"
+
+command="/usr/local/bin/lkaas-kerong"
+command_args="/usr/local/bin/Config.toml"
+
+pidfile="/var/run/lkaas-kerong.pid"
+
+start() {
+    ebegin "Starting LKAAS Kerong middleware"
+    start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" --exec "${command}" ${command_args}
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping LKAAS Kerong middleware"
+    start-stop-daemon --stop --pidfile "${pidfile}"
+    eend $?
+}
+
+depend() {
+    need net
+    use logger
+}
