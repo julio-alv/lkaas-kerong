@@ -26,9 +26,13 @@ pub enum Msg {
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
-    let conf_path = Path::new(&args[1]);
-    let content = fs::read_to_string(conf_path).await.expect("Failed to read file");
+    let conf_path = env::args()
+        .nth(1)
+        .expect("No config file was provided, example: lkaas-kerong <PATH_TO_CONFIG>");
+    let conf_path = Path::new(&conf_path);
+    let content = fs::read_to_string(conf_path)
+        .await
+        .expect("Failed to read file");
     let config: Config = toml::from_str(&content).expect("Failed to load Config.toml");
 
     // Initialize MQTT Client
@@ -37,7 +41,11 @@ async fn main() {
         .take(8)
         .map(char::from)
         .collect();
-    let mut opts = MqttOptions::new(format!("lkaas_{client}"), &config.mqtt.url, config.mqtt.port);
+    let mut opts = MqttOptions::new(
+        format!("lkaas_{client}"),
+        &config.mqtt.url,
+        config.mqtt.port,
+    );
     opts.set_clean_start(true)
         .set_credentials(&config.mqtt.user, &config.mqtt.pass)
         .set_keep_alive(Duration::from_secs(config.mqtt.keep_alive));
@@ -176,19 +184,17 @@ async fn cmd_loop(board: Arc<Mutex<CU16>>, mut eventloop: EventLoop) {
     loop {
         let event = eventloop.poll().await;
         match &event {
-            Ok(v) => {
-                match v {
-                    Event::Incoming(Packet::Publish(publish)) => {
-                        let payload = String::from_utf8(publish.payload.to_vec()).unwrap();
-                        if let Ok(n) = payload.parse::<u8>() {
-                            let mut board = board.lock().await;
-                            board.open(n.saturating_sub(1)).unwrap();
-                        }
+            Ok(v) => match v {
+                Event::Incoming(Packet::Publish(publish)) => {
+                    let payload = String::from_utf8(publish.payload.to_vec()).unwrap();
+                    if let Ok(n) = payload.parse::<u8>() {
+                        let mut board = board.lock().await;
+                        board.open(n.saturating_sub(1)).unwrap();
                     }
-                    Event::Incoming(_) => (),
-                    Event::Outgoing(_) => (),
                 }
-            }
+                Event::Incoming(_) => (),
+                Event::Outgoing(_) => (),
+            },
             Err(e) => {
                 eprintln!("Error = {e:?}");
             }
