@@ -6,10 +6,20 @@ command="/usr/local/bin/lkaas-kerong"
 command_args="/usr/local/bin/Config.toml"
 
 pidfile="/var/run/lkaas-kerong.pid"
+output_log="/var/log/lkaas.log"
+error_log="/var/log/lkaas.err"
+
+supervisor="supervise-daemon"
+supervise_daemon_args="--respawn"
 
 start() {
     ebegin "Starting LKAAS Kerong middleware"
-    start-stop-daemon --start --background --make-pidfile --pidfile "${pidfile}" --exec "${command}" ${command_args}
+    start-stop-daemon --start --exec "${command}" ${command_args} \
+        --background \
+        --make-pidfile \
+        --pidfile ${pidfile} \
+        --stdout ${output_log} \
+        --stderr ${error_log} \
     eend $?
 }
 
@@ -22,4 +32,12 @@ stop() {
 depend() {
     need net
     use logger
+}
+
+restart() {
+    ebegin "Restarting LKAAS Kerong middleware"
+    stop
+    sleep 1
+    start
+    eend $?
 }
